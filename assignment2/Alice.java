@@ -55,8 +55,8 @@ class Alice {
     private DatagramSocket socket;
 
     // arbituary values for NAK and ACK
-    long ACK = 112233445;
-    long NAK = 667788990;
+    int ACK = 112233445;
+    int NAK = 667788990;
 
     public static void main(String[] args) throws Exception {
         // Do not modify this method
@@ -112,13 +112,11 @@ class Alice {
 
     public void sendFile(String path, DatagramSocket socket, InetAddress address, int port) throws Exception {
         // Implement me!
+        
         String fileName = path.substring(path.lastIndexOf(" ")+1);
         byte[] fileNameBytes = ("f" + fileName).getBytes();
-        DatagramPacket fileNamePkt = new DatagramPacket(fileNameBytes, fileNameBytes.length,
-                                                        address, port);
-
-        socket.send(fileNamePkt);
-        receiveAck();
+        DatagramPacket fileNamePkt = buildPacketWithoutSize(fileNameBytes, address, port);
+        sendInitialFilePacket(fileNamePkt, socket);
         
         byte[] buffer = new byte[496];
 		FileInputStream fis = new FileInputStream(path);
@@ -131,62 +129,64 @@ class Alice {
 				break;
             }
 
-            byte[] pktBytes = new byte[500];
-            ByteBuffer bbuffer = ByteBuffer.wrap(pktBytes);
-            System.out.println(numBytes);
-            System.out.println(new String(buffer));
-            bbuffer.putInt(numBytes);
-            bbuffer.put(buffer);
-            System.out.println(new String(pktBytes));
-
-            DatagramPacket msgPkt = new DatagramPacket(pktBytes, pktBytes.length,
-                                                       address, port);
-
-            socket.send(msgPkt);
+            DatagramPacket msgPkt = buildPacketWithSize(numBytes, buffer, address, port);
+            sendFileChunkPacket(msgPkt, socket); // to implement
         }
         
         byte[] eofBytes = new byte[496];
-        ByteBuffer eofbuffer = ByteBuffer.wrap(eofBytes);
-        eofbuffer.putInt((byte) 0);
+        DatagramPacket eofPkt = buildPacketWithSize(0, eofBytes, address, port);
+        sendEOFPacket(eofPkt, socket);
+    }
 
-        DatagramPacket eofPkt = new DatagramPacket(eofBytes, eofBytes.length,
-                                                   address, port);
-        System.out.println("SENDING: eof");
-        socket.send(eofPkt);
+    public void sendInitialFilePacket(DatagramPacket pkt, DatagramSocket socket) {
+        try {
+            socket.send(pkt);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        if (!receiveAck()) {
+            sendInitialFilePacket(pkt, socket);
+        } else {
+            seqNum++;
+        }
+    }
+
+    public void sendFileChunkPacket(DatagramPacket pkt, DatagramSocket socket) {
+        try {
+            socket.send(pkt);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        if (!receiveAck()) {
+            sendFileChunkPacket(pkt, socket);
+        } else {
+            seqNum++;
+        }
+    }
+
+    public void sendEOFPacket(DatagramPacket pkt, DatagramSocket socket) {
+        try {
+            socket.send(pkt);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        if (!receiveAck()) {
+            sendEOFPacket(pkt, socket);
+        } else {
+            seqNum++;
+        }
     }
 
     public void sendMessage(String message, DatagramSocket socket, InetAddress address, int port) throws Exception {
         // Implement me!
         byte[] messageBytes = ("m" + message).getBytes();
-        byte[] contentBytes = new byte[504];
-        ByteBuffer contentBuffer = ByteBuffer.wrap(contentBytes);
-        contentBuffer.put(messageBytes);
+        DatagramPacket msgPkt = buildPacketWithoutSize(messageBytes, address, port);
 
-        CRC32 crc32 = new CRC32();
-        crc32.update(contentBytes);
-        long crc = crc32.getValue();
-
-        byte[] pktBytes = new byte[512];
-        ByteBuffer pktBuffer = ByteBuffer.wrap(pktBytes);
-        pktBuffer.putLong(crc);
-        pktBuffer.put(contentBytes);
-
-        DatagramPacket msgPkt = new DatagramPacket(pktBytes, pktBytes.length,
-                                                   address, port);
         socket.send(msgPkt);
-        // printBinary(pktBytes, 20);
-        ByteBuffer test = ByteBuffer.wrap(pktBytes);
-        long crctest = test.getLong();
-        // System.out.println(crctest);
-        // System.out.println(crc);        
-        byte[] testest = new byte[test.remaining()];
-        test.get(testest);
-        crc32.reset();
-        crc32.update(testest);
-        // System.out.println(testest.length);
-        // System.out.println(crc32.getValue());
         if (!receiveAck()) {
             sendMessage(message, socket, address, port);
+        } else {
+            seqNum++;
         }
     }
 
@@ -196,7 +196,7 @@ class Alice {
 
         try {
             socket.receive(ackPkt);
-            System.out.println("Echo from server: " + new String(ackPkt.getData(), 0, ackPkt.getLength()));
+            // System.out.println("Echo from server: " + new String(ackPkt.getData(), 0, ackPkt.getLength()));
 
             byte[] pktBytes = ackPkt.getData();
             ByteBuffer pktBuffer = ByteBuffer.wrap(pktBytes);
@@ -207,26 +207,67 @@ class Alice {
 
             CRC32 crc32 = new CRC32();
             crc32.update(content);
-            // System.out.println(content.length);
-            // printBinary(content, 20);
-            // System.out.println(crc);
-            // System.out.println(crc32.getValue());
 
             if (crc == crc32.getValue()) {
                 ByteBuffer contentBuffer = ByteBuffer.wrap(content);
                 long ACKrcv = contentBuffer.getLong();
-                System.out.println(ACKrcv);
                 if (ACKrcv == ACK) {
                     return true;
                 }
             } 
-
+        } catch (SocketTimeoutException e) {
+            return false;
         } catch (Exception e) {
             e.printStackTrace();
             return false;
         }
 
         return false;
+    }
+
+    public DatagramPacket buildPacketWithoutSize(byte[] messageBytes, InetAddress address, int port) {
+        byte[] contentBytes = new byte[504];
+        ByteBuffer contentBuffer = ByteBuffer.wrap(contentBytes);
+        contentBuffer.putInt(seqNum);
+        contentBuffer.put(messageBytes);
+
+        CRC32 crc32 = new CRC32();
+        crc32.update(contentBytes);
+        long crc = crc32.getValue();
+        // System.out.println(crc);
+
+        byte[] pktBytes = new byte[512];
+        ByteBuffer pktBuffer = ByteBuffer.wrap(pktBytes);
+        pktBuffer.putLong(crc);
+        pktBuffer.put(contentBytes);
+
+        DatagramPacket msgPkt = new DatagramPacket(pktBytes, pktBytes.length,
+                                                   address, port);
+
+        return msgPkt;
+    }
+
+    public DatagramPacket buildPacketWithSize(int size, byte[] messageBytes, InetAddress address, int port) {
+        byte[] contentBytes = new byte[504];
+        ByteBuffer contentBuffer = ByteBuffer.wrap(contentBytes);
+        contentBuffer.putInt(seqNum);
+        contentBuffer.putInt(size);
+        contentBuffer.put(messageBytes);
+
+        CRC32 crc32 = new CRC32();
+        crc32.update(contentBytes);
+        long crc = crc32.getValue();
+        // System.out.println(crc);
+
+        byte[] pktBytes = new byte[512];
+        ByteBuffer pktBuffer = ByteBuffer.wrap(pktBytes);
+        pktBuffer.putLong(crc);
+        pktBuffer.put(contentBytes);
+
+        DatagramPacket msgPkt = new DatagramPacket(pktBytes, pktBytes.length,
+                                                   address, port);
+
+        return msgPkt;
     }
 
     public void printBinary(byte[] b, int firstLen) {

@@ -16,7 +16,7 @@ import java.io.*;
 import java.util.zip.CRC32;
 
 class Bob {
-    private int seqNum = 0;
+    private int seqNum = -1;
     DatagramSocket socket;
     // arbituary values for NAK and ACK
     long ACK = 112233445;
@@ -56,14 +56,28 @@ class Bob {
                 continue;
             }
 
+            ByteBuffer contentBuffer = ByteBuffer.wrap(content);
+            int seq = contentBuffer.getInt();
+            // System.out.println("seq " + seq + " seqNum " + seqNum);
+
+            if (seq <= seqNum) {
+                // printMessage("ALREADY ACKED");
+                sendACK(new String("already ACKed").getBytes(), rcvedPkt.getAddress(), rcvedPkt.getPort());
+                continue;
+            }
+
+            seqNum++;
+            content = new byte[contentBuffer.remaining()];
+            contentBuffer.get(content);
+
             String incoming = new String(content);
             if (incoming.substring(0, 1).equals("m")) {
                 String res = incoming.substring(1).trim();
                 printMessage(res);
                 sendACK(res.getBytes(), rcvedPkt.getAddress(), rcvedPkt.getPort());
             } else if (incoming.substring(0, 1).equals("f")) {
-                printMessage("File incoming:" + incoming.substring(1));
-                sendACK(rcvedPkt.getData(), rcvedPkt.getAddress(), rcvedPkt.getPort());
+                // printMessage("File incoming:" + incoming.substring(1));
+                sendACK(new String("file incoming").getBytes(), rcvedPkt.getAddress(), rcvedPkt.getPort());
                 try {
                     receiveFile();
                 } catch (Exception e) {
@@ -82,34 +96,59 @@ class Bob {
     }
 
     public void receiveFile() throws Exception {
-        byte[] inBuffer = new byte[500];
+        byte[] inBuffer = new byte[512];
         DatagramPacket rcvedPkt = new DatagramPacket(inBuffer, inBuffer.length);
 
-        int size;
 
+
+        int size;
 		FileOutputStream fos = new FileOutputStream("output");
         BufferedOutputStream bos = new BufferedOutputStream(fos);
         
 
         while (true) {
             socket.receive(rcvedPkt);
-            byte[] rcvBytes = rcvedPkt.getData();
-            ByteBuffer bbuffer = ByteBuffer.wrap(rcvBytes);
-            size = bbuffer.getInt();
-            printMessage(size + "");
+            ByteBuffer pktBuffer = ByteBuffer.wrap(rcvedPkt.getData());
+
+            long crc = pktBuffer.getLong();
+            byte[] content = new byte[pktBuffer.remaining()];
+            pktBuffer.get(content);
+    
+            if (!crcCheck(crc, content)) {
+                // printMessage("CRC check fail");
+                sendNAK(rcvedPkt.getAddress(), rcvedPkt.getPort());
+                continue;
+            }
+
+            ByteBuffer contentBuffer = ByteBuffer.wrap(content);
+            int seq = contentBuffer.getInt();
+            // System.out.println("seq " + seq + " seqNum " + seqNum);
+
+            if (seq <= seqNum) {
+                // printMessage("ALREADY ACKED");
+                sendACK(new String("already ACKed").getBytes(), rcvedPkt.getAddress(), rcvedPkt.getPort());
+                continue;
+            }
+
+            seqNum++;
+
+            size = contentBuffer.getInt();
+            // printMessage(size + "");
 
             if (size > 0) {
-                byte[] content = new byte[size];
-                bbuffer.get(content);
-                printMessage("WRITING TO FILE");
-                bos.write(content);
+                byte[] fileContent = new byte[size];
+                contentBuffer.get(fileContent);
+                // printMessage("WRITING TO FILE");
+                bos.write(fileContent);
+                sendACK(new String("ack seq " + seq).getBytes(), rcvedPkt.getAddress(), rcvedPkt.getPort());
             } else {
                 bos.close();
                 fos.close();
+                sendACK(new String("ack seq " + seq).getBytes(), rcvedPkt.getAddress(), rcvedPkt.getPort());
                 break;
             }
         }
-        printMessage("done");
+        // printMessage("done");
     }
 
     public void sendACK(byte[] msg, InetAddress address, int port) {
