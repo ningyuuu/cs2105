@@ -47,11 +47,16 @@ import java.nio.*;
 import java.util.Arrays;
 import java.util.Scanner;
 import java.io.*;
+import java.util.zip.CRC32;
 
 
 class Alice {
     private int seqNum = 0;
     private DatagramSocket socket;
+
+    // arbituary values for NAK and ACK
+    long ACK = 112233445;
+    long NAK = 667788990;
 
     public static void main(String[] args) throws Exception {
         // Do not modify this method
@@ -136,13 +141,7 @@ class Alice {
 
             DatagramPacket msgPkt = new DatagramPacket(pktBytes, pktBytes.length,
                                                        address, port);
-            
-            // ByteBuffer test = ByteBuffer.wrap(pktBytes);
-            // System.out.println(test.getInt());
-            // byte[] testest = new byte[test.remaining()];
-            // test.get(testest);
-            // System.out.println(new String(testest));
-            // System.out.println("SENDING: " + new String(buffer));
+
             socket.send(msgPkt);
         }
         
@@ -159,21 +158,84 @@ class Alice {
     public void sendMessage(String message, DatagramSocket socket, InetAddress address, int port) throws Exception {
         // Implement me!
         byte[] messageBytes = ("m" + message).getBytes();
-        DatagramPacket msgPkt = new DatagramPacket(messageBytes, messageBytes.length,
+        byte[] contentBytes = new byte[504];
+        ByteBuffer contentBuffer = ByteBuffer.wrap(contentBytes);
+        contentBuffer.put(messageBytes);
+
+        CRC32 crc32 = new CRC32();
+        crc32.update(contentBytes);
+        long crc = crc32.getValue();
+
+        byte[] pktBytes = new byte[512];
+        ByteBuffer pktBuffer = ByteBuffer.wrap(pktBytes);
+        pktBuffer.putLong(crc);
+        pktBuffer.put(contentBytes);
+
+        DatagramPacket msgPkt = new DatagramPacket(pktBytes, pktBytes.length,
                                                    address, port);
         socket.send(msgPkt);
-        receiveAck();
+        // printBinary(pktBytes, 20);
+        ByteBuffer test = ByteBuffer.wrap(pktBytes);
+        long crctest = test.getLong();
+        // System.out.println(crctest);
+        // System.out.println(crc);        
+        byte[] testest = new byte[test.remaining()];
+        test.get(testest);
+        crc32.reset();
+        crc32.update(testest);
+        // System.out.println(testest.length);
+        // System.out.println(crc32.getValue());
+        if (!receiveAck()) {
+            sendMessage(message, socket, address, port);
+        }
     }
 
-    public void receiveAck() {
+    public boolean receiveAck() {
         byte[] inBuffer = new byte[512];
         DatagramPacket ackPkt = new DatagramPacket(inBuffer, inBuffer.length);
 
         try {
             socket.receive(ackPkt);
             System.out.println("Echo from server: " + new String(ackPkt.getData(), 0, ackPkt.getLength()));
+
+            byte[] pktBytes = ackPkt.getData();
+            ByteBuffer pktBuffer = ByteBuffer.wrap(pktBytes);
+
+            long crc = pktBuffer.getLong();
+            byte[] content = new byte[pktBuffer.remaining()];
+            pktBuffer.get(content);
+
+            CRC32 crc32 = new CRC32();
+            crc32.update(content);
+            // System.out.println(content.length);
+            // printBinary(content, 20);
+            // System.out.println(crc);
+            // System.out.println(crc32.getValue());
+
+            if (crc == crc32.getValue()) {
+                ByteBuffer contentBuffer = ByteBuffer.wrap(content);
+                long ACKrcv = contentBuffer.getLong();
+                System.out.println(ACKrcv);
+                if (ACKrcv == ACK) {
+                    return true;
+                }
+            } 
+
         } catch (Exception e) {
             e.printStackTrace();
+            return false;
+        }
+
+        return false;
+    }
+
+    public void printBinary(byte[] b, int firstLen) {
+        byte[] i = new byte[firstLen];
+        for (int j=0; j<firstLen; j++) {
+            i[j] = b[j];
+        }
+        for (byte bb: i) {
+            System.out.println(Integer.toBinaryString((bb+256)%256));    
         }
     }
 }
