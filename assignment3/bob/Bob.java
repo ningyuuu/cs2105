@@ -86,6 +86,7 @@ class Bob {  // Bob is a TCP server
         
         // Clean up
         try {
+            System.out.println("Closing sockets");
             welcomeSkt.close();
             connectionSkt.close();
         } catch (IOException ioe) {
@@ -131,6 +132,7 @@ class Bob {  // Bob is a TCP server
             System.exit(1);
         } catch (IOException ioe) {
             System.out.println("Error sending messages to Alice");
+            ioe.printStackTrace();
             System.exit(1);
         }
     }
@@ -203,6 +205,7 @@ class Bob {  // Bob is a TCP server
                 byte[] rawKey = (byte[])sessionKeyObj.getObject(cipher);
                 // Reconstruct AES key from encoded form
                 this.sessionKey = new SecretKeySpec(rawKey, 0, rawKey.length, "AES");
+                // System.out.println(sessionKey);
             } catch (GeneralSecurityException gse) {
                 System.out.println("Error: wrong cipher to decrypt session key");
                 System.exit(1);
